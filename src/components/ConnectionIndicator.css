@@ -1,0 +1,50 @@
+/* ConnectionIndicator component styles */
+
+.connection-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* Live connection - steady */
+.connection-dot-live {
+  background-color: var(--accent-cyan);
+}
+
+/* Connecting - pulsing animation */
+.connection-dot-connecting {
+  background-color: var(--accent-cyan);
+  animation: pulse-connection 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Reconnecting - faster pulse */
+.connection-dot-reconnecting {
+  background-color: var(--warning);
+  animation: pulse-connection 0.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Polling - steady warning */
+.connection-dot-polling {
+  background-color: var(--warning);
+}
+
+/* Closed - dimmed */
+.connection-dot-closed {
+  background-color: var(--ink-soft);
+}
+
+@keyframes pulse-connection {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}

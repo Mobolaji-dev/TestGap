@@ -1,0 +1,41 @@
+/* ResultsPage component styles */
+
+.results-page {
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--canvas);
+  padding: var(--spacing-xxl) var(--spacing-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.results-page-container {
+  max-width: 600px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.results-page-container h1 {
+  margin: 0;
+  color: var(--ink);
+}
+
+.results-page-message {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.results-page-message .text-code-md {
+  display: inline;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono",
+    Menlo, monospace;
+  font-size: 13px;
+  color: var(--ink);
+  word-break: break-all;
+}
