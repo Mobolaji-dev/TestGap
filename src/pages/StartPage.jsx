@@ -209,6 +209,11 @@ export default function StartPage() {
         );
       }
 
+      if (!response || !response.run_id) {
+        setSubmitError("The backend did not return a run id.");
+        return;
+      }
+
       navigate(`/run/${response.run_id}`);
     } catch (err) {
       if (err.status) {
@@ -350,10 +355,8 @@ export default function StartPage() {
                 {/* Empty state */}
                 {!projectsLoading && !projectsError && projects.length === 0 && (
                   <div className="empty-section">
-                    <p className="text-body-lg">No projects available</p>
                     <p className="text-body-sm">
-                      The backend needs a local or demo repository to scan. Please set up a
-                      project and try again.
+                      No projects are configured. The backend needs a local or demo repository.
                     </p>
                   </div>
                 )}

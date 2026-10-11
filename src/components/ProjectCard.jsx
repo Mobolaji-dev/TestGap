@@ -65,10 +65,12 @@ export default function ProjectCard({
         <div className="project-card-meta">
           <span className="text-body-sm">{project.language}</span>
           <span className="text-body-sm">•</span>
-          <span className="text-body-sm">{project.test_framework}</span>
+          <span className="text-body-sm">
+            {project.test_framework ?? "No test framework detected"}
+          </span>
         </div>
 
-        <div className="project-card-path text-body-sm">
+        <div className="project-card-path text-code-md">
           {project.path_label}
         </div>
 
@@ -78,6 +80,13 @@ export default function ProjectCard({
             status={project.ready ? "ready" : "not-ready"}
           />
         </div>
+
+        {/* Not ready explanation */}
+        {!project.ready && (
+          <div className="project-card-warning text-body-sm">
+            pytest is required to scan this project.
+          </div>
+        )}
 
         {/* Warning message if present */}
         {project.warning && (

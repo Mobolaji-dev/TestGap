@@ -78,7 +78,7 @@ export default function CandidateTests({ candidateTests = [] }) {
   return (
     <section className="candidate-tests-section" aria-label="Candidate Tests">
       <div className="candidate-tests-header">
-        <h2 className="text-heading-lg candidate-title">Candidate Tests</h2>
+        <h2 className="text-heading-lg candidate-title">Test drafts</h2>
         <p className="candidate-disclaimer text-body-sm">
           These are drafts. They have not been run, repaired, mutation-verified, or applied to your project.
         </p>

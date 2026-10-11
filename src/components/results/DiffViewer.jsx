@@ -73,7 +73,7 @@ export default function DiffViewer({ runId, candidateTests = [] }) {
       setIsDiffOpen(true);
     } catch (err) {
       if (err.status === 409) {
-        setError("No generated candidate is available to preview diff (409 Conflict).");
+        setError("No generated test is available for this run.");
       } else {
         setError(err.message || "Failed to load diff preview.");
       }
@@ -97,7 +97,7 @@ export default function DiffViewer({ runId, candidateTests = [] }) {
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
       if (err.status === 409) {
-        setError("No generated candidate is available to download patch (409 Conflict).");
+        setError("No generated test is available for this run.");
       } else {
         setError(err.message || "Failed to download patch.");
       }

@@ -11,7 +11,19 @@ import "./MetricCards.css";
 export default function MetricCards({ metrics, candidateTests = [] }) {
   const hasBaselinePct = typeof metrics?.coverage_before_pct === "number";
   const baselineCoverage = hasBaselinePct
-    ? `${metrics.coverage_before_pct}%`
+    ? `${metrics.coverage_before_pct.toFixed(1)}%`
+    : "Not available";
+
+  const hasCoverageAfter = typeof metrics?.coverage_after_pct === "number";
+  const coverageAfter = hasCoverageAfter
+    ? `${metrics.coverage_after_pct.toFixed(1)}%`
+    : "Not available";
+
+  const attempted = typeof metrics?.mutations_attempted === "number" ? metrics.mutations_attempted : 0;
+  const killed = typeof metrics?.mutations_killed === "number" ? metrics.mutations_killed : 0;
+  const hasMutationScore = attempted > 0;
+  const mutationScore = hasMutationScore
+    ? `${killed} / ${attempted} killed`
     : "Not available";
 
   const testDraftsGenerated = Array.isArray(candidateTests)
@@ -26,13 +38,13 @@ export default function MetricCards({ metrics, candidateTests = [] }) {
     },
     {
       title: "Coverage after",
-      value: "Not available",
-      isAvailable: false,
+      value: coverageAfter,
+      isAvailable: hasCoverageAfter,
     },
     {
       title: "Mutation score",
-      value: "Not available",
-      isAvailable: false,
+      value: mutationScore,
+      isAvailable: hasMutationScore,
     },
     {
       title: "Test drafts generated",
