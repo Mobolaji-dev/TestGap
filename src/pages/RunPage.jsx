@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import useRunStream, { isTerminalStatus } from "../hooks/useRunStream";
-import { cancelRun, ApiError, formatErrorDetail } from "../api/client";
+import { cancelRun } from "../api/testgapApi";
 import StatusBadge from "../components/StatusBadge";
 import ConnectionIndicator from "../components/ConnectionIndicator";
 import EventTimeline from "../components/EventTimeline";
@@ -89,8 +89,7 @@ export default function RunPage() {
       await cancelRun(runId);
       await refresh();
     } catch (err) {
-      const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-      setCancelError(msg || "Failed to cancel run.");
+      setCancelError(err.message || "Failed to cancel run.");
     } finally {
       setIsCancelling(false);
     }

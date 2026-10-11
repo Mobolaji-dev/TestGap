@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { getRun, ApiError, formatErrorDetail } from "../api/client";
+import { getRun } from "../api/testgapApi";
 
 /**
  * Hook to fetch run details for the Results view.
@@ -46,8 +46,7 @@ export default function useRun(runId) {
         setErrorStatus(null);
       } catch (err) {
         if (!isMountedRef.current || err.name === "AbortError") return;
-        const msg =
-          err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
+        const msg = err.message || "";
         setError(msg);
         setErrorStatus(
           err.status ??
@@ -82,8 +81,7 @@ export default function useRun(runId) {
       return data;
     } catch (err) {
       if (!isMountedRef.current || err.name === "AbortError") return null;
-      const msg =
-        err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
+      const msg = err.message || "";
       setError(msg);
       setErrorStatus(
         err.status ??

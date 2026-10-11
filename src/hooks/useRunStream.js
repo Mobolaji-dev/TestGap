@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getRun, eventsUrl, ApiError, formatErrorDetail } from "../api/client";
+import { getRun, getRunEventsUrl } from "../api/testgapApi";
 
 const TERMINAL_STATUSES = new Set([
   "completed",
@@ -253,7 +253,7 @@ export default function useRunStream(runId) {
     const nextConn = reconnectAttemptsRef.current > 0 ? "reconnecting" : "connecting";
     setConnection(nextConn);
 
-    const url = eventsUrl(runId, lastEventIdRef.current);
+    const url = getRunEventsUrl(runId, lastEventIdRef.current);
     const es = new EventSource(url);
     eventSourceRef.current = es;
 
@@ -375,8 +375,7 @@ export default function useRunStream(runId) {
       return data;
     } catch (err) {
       if (err.name !== "AbortError") {
-        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-        setError(msg);
+        setError(err.message);
         setErrorStatus(err.status ?? null);
       }
       return null;
@@ -420,7 +419,7 @@ export default function useRunStream(runId) {
         startReconcile();
       } catch (err) {
         if (!isMountedRef.current || err.name === "AbortError") return;
-        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
+        const msg = err.message || "";
         setError(msg);
         setErrorStatus(err.status ?? (msg.toLowerCase().includes("not found") ? 404 : null));
         setConnection("closed");

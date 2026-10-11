@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { getDiff, getPatch, ApiError, formatErrorDetail } from "../../api/client";
+import { getDiff, getPatch } from "../../api/testgapApi";
 import "./DiffViewer.css";
 
 /**
@@ -72,11 +72,10 @@ export default function DiffViewer({ runId, candidateTests = [] }) {
       setDiffContent(res.diff || "");
       setIsDiffOpen(true);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err.status === 409) {
         setError("No generated candidate is available to preview diff (409 Conflict).");
       } else {
-        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-        setError(msg || "Failed to load diff preview.");
+        setError(err.message || "Failed to load diff preview.");
       }
     } finally {
       setLoadingDiff(false);
@@ -97,11 +96,10 @@ export default function DiffViewer({ runId, candidateTests = [] }) {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err.status === 409) {
         setError("No generated candidate is available to download patch (409 Conflict).");
       } else {
-        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-        setError(msg || "Failed to download patch.");
+        setError(err.message || "Failed to download patch.");
       }
     } finally {
       setDownloadingPatch(false);

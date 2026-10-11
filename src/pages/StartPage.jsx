@@ -1,6 +1,10 @@
 import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { listProjects, createRun, formatErrorDetail, ApiError } from "../api/client";
+import {
+  listProjects,
+  createRunFromRepo,
+  createRunFromProject,
+} from "../api/testgapApi";
 import ProjectCard from "../components/ProjectCard";
 import SegmentedSwitch from "../components/SegmentedSwitch";
 import RepoInput from "../components/RepoInput";
@@ -91,9 +95,7 @@ export default function StartPage() {
         }
       }
     } catch (err) {
-      setProjectsError(
-        err instanceof ApiError ? formatErrorDetail(err.detail) : err.message,
-      );
+      setProjectsError(err.message || "Failed to load projects.");
     } finally {
       if (slowBackendTimeout.current) {
         clearTimeout(slowBackendTimeout.current);
@@ -175,39 +177,41 @@ export default function StartPage() {
     if (!validateTargetLimit(targetLimit)) return;
     if (!validateRepairLimit(repairLimit)) return;
 
-    let projectIdToSubmit;
-
-    if (mode === "repo") {
-      const validation = parseGithubUrl(repoUrl);
-      if (!validation.ok) {
-        setRepoParsed(null);
-        return;
-      }
-      projectIdToSubmit = validation.url;
-    } else {
-      const selectedProject = Array.isArray(projects)
-        ? projects.find((p) => p.id === selectedProjectId)
-        : null;
-      if (!selectedProject || !selectedProject.ready) {
-        setSubmitError("Please select a ready project");
-        return;
-      }
-      projectIdToSubmit = selectedProjectId;
-    }
-
     try {
       setIsSubmitting(true);
 
-      const response = await createRun(
-        projectIdToSubmit,
-        Number(targetLimit),
-        Number(repairLimit),
-        Boolean(verifyMutations),
-      );
+      let response;
+      if (mode === "repo") {
+        const validation = parseGithubUrl(repoUrl);
+        if (!validation.ok) {
+          setRepoParsed(null);
+          return;
+        }
+        response = await createRunFromRepo(
+          validation.url,
+          Number(targetLimit),
+          Number(repairLimit),
+          Boolean(verifyMutations),
+        );
+      } else {
+        const selectedProject = Array.isArray(projects)
+          ? projects.find((p) => p.id === selectedProjectId)
+          : null;
+        if (!selectedProject || !selectedProject.ready) {
+          setSubmitError("Please select a ready project");
+          return;
+        }
+        response = await createRunFromProject(
+          selectedProjectId,
+          Number(targetLimit),
+          Number(repairLimit),
+          Boolean(verifyMutations),
+        );
+      }
 
       navigate(`/run/${response.run_id}`);
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err.status) {
         if (err.status === 404) {
           setSubmitError("The backend could not find that repository.");
         } else if (err.status >= 500 && err.status <= 599) {
@@ -219,9 +223,9 @@ export default function StartPage() {
           err.status === 422 ||
           err.status === 409
         ) {
-          setSubmitError(formatErrorDetail(err.detail));
+          setSubmitError(err.message);
         } else {
-          setSubmitError(formatErrorDetail(err.detail) || `Error (${err.status})`);
+          setSubmitError(err.message || `Error (${err.status})`);
         }
       } else {
         setSubmitError(
