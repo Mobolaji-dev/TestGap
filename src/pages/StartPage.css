@@ -149,6 +149,10 @@
 .retry-button {
   align-self: center;
   padding: 12px 24px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background-color: var(--cloud);
   border: 1px solid var(--hairline);
   border-radius: var(--rounded-md);
@@ -292,6 +296,10 @@
 .try-again-button {
   align-self: flex-start;
   padding: 12px 24px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background-color: var(--cloud);
   border: 1px solid var(--hairline);
   border-radius: var(--rounded-md);
@@ -351,6 +359,21 @@
 .start-scan-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Tabpanel & demo wrapper */
+.tabpanel-content {
+  width: 100%;
+}
+
+.demo-projects-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.mode-switch-group {
+  margin-bottom: var(--spacing-xs);
 }
 
 /* Mobile responsive */

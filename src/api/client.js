@@ -103,22 +103,37 @@ export async function listProjects(signal = null) {
 
 /**
  * POST /api/runs
- * Create a new test scan run
- * @param {Object} payload - Run creation payload
- * @param {string} payload.project_id - Project ID to scan
- * @param {number} payload.target_limit - Max number of targets to test (1-10)
- * @param {number} payload.repair_limit - Max number of repairs per target (0-2)
- * @param {boolean} payload.verify_mutations - Whether to verify mutations
- * @param {AbortSignal} signal - Optional abort signal
+ * Create a new test scan run.
+ *
+ * This is the ONE place where the request body is assembled.
+ * projectId is either a demo project id (e.g. "demo-flask-shop")
+ * or a normalised GitHub URL (e.g. "https://github.com/owner/repo").
+ *
+ * @param {string} projectId - Project ID or normalised GitHub URL
+ * @param {number} targetLimit - Max number of targets to test (1-10)
+ * @param {number} repairLimit - Max number of repairs per target (0-2)
+ * @param {boolean} verifyMutations - Whether to verify mutations
+ * @param {AbortSignal} [signal] - Optional abort signal
  * @returns {Promise<{
  *   run_id: string,
  *   status: string
  * }>} Created run with run_id
  */
-export async function createRun(payload, signal = null) {
+export async function createRun(
+  projectId,
+  targetLimit,
+  repairLimit,
+  verifyMutations,
+  signal = null,
+) {
   return apiCall("/api/runs", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      project_id: projectId,
+      target_limit: Number(targetLimit),
+      repair_limit: Number(repairLimit),
+      verify_mutations: Boolean(verifyMutations),
+    }),
     signal,
   });
 }

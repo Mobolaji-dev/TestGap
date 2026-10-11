@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { listProjects, createRun, formatErrorDetail, ApiError } from "../api/client";
 import ProjectCard from "../components/ProjectCard";
+import SegmentedSwitch from "../components/SegmentedSwitch";
+import RepoInput from "../components/RepoInput";
+import { parseGithubUrl } from "../utils/githubUrl";
 import "./StartPage.css";
 
 const TARGET_LIMIT_MIN = 1;
@@ -12,19 +15,33 @@ const REPAIR_LIMIT_MIN = 0;
 const REPAIR_LIMIT_MAX = 2;
 const REPAIR_LIMIT_DEFAULT = 2;
 
+const MODE_OPTIONS = [
+  { value: "repo", label: "GITHUB REPO" },
+  { value: "demo", label: "DEMO PROJECTS" },
+];
+
 /**
- * Start screen - project selector and scan configuration
+ * Start screen - GitHub repo scanner and demo project selector with scan configuration.
  */
 export default function StartPage() {
   const navigate = useNavigate();
 
+  // Mode: "repo" (default) or "demo"
+  const [mode, setMode] = useState("repo");
+
+  // GitHub repo mode state
+  const [repoUrl, setRepoUrl] = useState("");
+  const [repoParsed, setRepoParsed] = useState(null);
+
+  // Demo projects mode state (lazy-loaded when tab opened, then cached)
   const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectsError, setProjectsError] = useState(null);
   const [slowBackend, setSlowBackend] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
 
-  // Form state
+  // Shared scan configuration state (preserved across mode switches)
   const [targetLimit, setTargetLimit] = useState(TARGET_LIMIT_DEFAULT);
   const [repairLimit, setRepairLimit] = useState(REPAIR_LIMIT_DEFAULT);
   const [verifyMutations, setVerifyMutations] = useState(true);
@@ -40,57 +57,65 @@ export default function StartPage() {
   // For slow backend timeout
   const slowBackendTimeout = useRef(null);
 
-  // Fetch projects on mount
-  useEffect(() => {
-    const fetchProjects = async () => {
-      try {
-        setLoading(true);
-        setError(null);
+  // Fetch demo projects only on demand
+  const fetchProjects = useCallback(async () => {
+    try {
+      setProjectsLoading(true);
+      setProjectsError(null);
+      setSlowBackend(false);
 
-        // Set timeout for slow backend message
-        slowBackendTimeout.current = setTimeout(() => {
-          setSlowBackend(true);
-        }, 6000);
+      slowBackendTimeout.current = setTimeout(() => {
+        setSlowBackend(true);
+      }, 6000);
 
-        const data = await listProjects();
-        
-        // Defensive check: ensure data is an array
-        if (!Array.isArray(data)) {
-          setError("Invalid projects response from backend");
-          setLoading(false);
-          return;
-        }
+      const data = await listProjects();
 
-        setProjects(data);
-
-        // Try to preselect "demo-flask-shop" if it exists and is ready
-        const demoProject = data.find(
-          (p) => p.name === "demo-flask-shop" && p.ready
-        );
-        if (demoProject) {
-          setSelectedProjectId(demoProject.id);
-        }
-
-        // Clear slow backend message if we got results
-        if (slowBackendTimeout.current) {
-          clearTimeout(slowBackendTimeout.current);
-          setSlowBackend(false);
-        }
-      } catch (err) {
-        setError(err instanceof ApiError ? formatErrorDetail(err.detail) : err.message);
-      } finally {
-        setLoading(false);
+      if (!Array.isArray(data)) {
+        setProjectsError("Invalid projects response from backend");
+        return;
       }
-    };
 
-    fetchProjects();
+      setProjects(data);
+      setProjectsLoaded(true);
 
-    return () => {
+      // Try to preselect "demo-flask-shop" if it exists and is ready
+      const demoProject = data.find(
+        (p) => p.name === "demo-flask-shop" && p.ready,
+      );
+      if (demoProject) {
+        setSelectedProjectId(demoProject.id);
+      } else {
+        const firstReady = data.find((p) => p.ready);
+        if (firstReady) {
+          setSelectedProjectId(firstReady.id);
+        }
+      }
+    } catch (err) {
+      setProjectsError(
+        err instanceof ApiError ? formatErrorDetail(err.detail) : err.message,
+      );
+    } finally {
       if (slowBackendTimeout.current) {
         clearTimeout(slowBackendTimeout.current);
       }
-    };
+      setProjectsLoading(false);
+      setSlowBackend(false);
+    }
   }, []);
+
+  // Handle switching tabs
+  const handleModeChange = useCallback(
+    (newMode) => {
+      setMode(newMode);
+      setSubmitError(null);
+
+      // Lazy load demo projects on first switch to DEMO PROJECTS tab
+      if (newMode === "demo" && !projectsLoaded && !projectsLoading) {
+        fetchProjects();
+      }
+    },
+    [projectsLoaded, projectsLoading, fetchProjects],
+  );
 
   // Validate target limit
   const validateTargetLimit = (value) => {
@@ -100,7 +125,9 @@ export default function StartPage() {
       return false;
     }
     if (num < TARGET_LIMIT_MIN || num > TARGET_LIMIT_MAX) {
-      setTargetError(`Must be between ${TARGET_LIMIT_MIN} and ${TARGET_LIMIT_MAX}`);
+      setTargetError(
+        `Must be between ${TARGET_LIMIT_MIN} and ${TARGET_LIMIT_MAX}`,
+      );
       return false;
     }
     setTargetError(null);
@@ -115,7 +142,9 @@ export default function StartPage() {
       return false;
     }
     if (num < REPAIR_LIMIT_MIN || num > REPAIR_LIMIT_MAX) {
-      setRepairError(`Must be between ${REPAIR_LIMIT_MIN} and ${REPAIR_LIMIT_MAX}`);
+      setRepairError(
+        `Must be between ${REPAIR_LIMIT_MIN} and ${REPAIR_LIMIT_MAX}`,
+      );
       return false;
     }
     setRepairError(null);
@@ -134,45 +163,85 @@ export default function StartPage() {
     validateRepairLimit(value);
   };
 
+  // Form submission handler
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
+    if (isSubmitting) return;
     setSubmitError(null);
 
-    // Validate all fields
+    // Validate limit fields
     if (!validateTargetLimit(targetLimit)) return;
     if (!validateRepairLimit(repairLimit)) return;
 
-    const selectedProject = projects.find((p) => p.id === selectedProjectId);
-    if (!selectedProject || !selectedProject.ready) {
-      setSubmitError("Please select a ready project");
-      return;
+    let projectIdToSubmit;
+
+    if (mode === "repo") {
+      const validation = parseGithubUrl(repoUrl);
+      if (!validation.ok) {
+        setRepoParsed(null);
+        return;
+      }
+      projectIdToSubmit = validation.url;
+    } else {
+      const selectedProject = Array.isArray(projects)
+        ? projects.find((p) => p.id === selectedProjectId)
+        : null;
+      if (!selectedProject || !selectedProject.ready) {
+        setSubmitError("Please select a ready project");
+        return;
+      }
+      projectIdToSubmit = selectedProjectId;
     }
 
     try {
       setIsSubmitting(true);
 
-      const response = await createRun({
-        project_id: selectedProjectId,
-        target_limit: Number(targetLimit),
-        repair_limit: Number(repairLimit),
-        verify_mutations: verifyMutations,
-      });
+      const response = await createRun(
+        projectIdToSubmit,
+        Number(targetLimit),
+        Number(repairLimit),
+        Boolean(verifyMutations),
+      );
 
-      // Navigate to run page
       navigate(`/run/${response.run_id}`);
     } catch (err) {
-      setSubmitError(
-        err instanceof ApiError ? formatErrorDetail(err.detail) : err.message
-      );
+      if (err instanceof ApiError) {
+        if (err.status === 404) {
+          setSubmitError("The backend could not find that repository.");
+        } else if (err.status >= 500 && err.status <= 599) {
+          setSubmitError(
+            "The backend had a problem starting this scan. Try again in a moment.",
+          );
+        } else if (
+          err.status === 400 ||
+          err.status === 422 ||
+          err.status === 409
+        ) {
+          setSubmitError(formatErrorDetail(err.detail));
+        } else {
+          setSubmitError(formatErrorDetail(err.detail) || `Error (${err.status})`);
+        }
+      } else {
+        setSubmitError(
+          "Could not reach the backend. The run may or may not have started, so check before trying again.",
+        );
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const selectedProject = Array.isArray(projects) 
+  const selectedProject = Array.isArray(projects)
     ? projects.find((p) => p.id === selectedProjectId)
     : null;
-  const canStartScan = selectedProject?.ready && !isSubmitting && !targetError && !repairError;
+
+  const canStartScan =
+    !isSubmitting &&
+    !targetError &&
+    !repairError &&
+    (mode === "repo" ? Boolean(repoParsed?.ok) : Boolean(selectedProject?.ready));
 
   return (
     <div className="start-page">
@@ -199,70 +268,113 @@ export default function StartPage() {
           </ul>
         </div>
 
-        {/* Content */}
+        {/* Form */}
         <form onSubmit={handleSubmit} className="start-page-form">
-          {/* Loading state */}
-          {loading && (
-            <div className="projects-section">
-              <h2 className="text-heading-lg projects-heading">Projects</h2>
-              <div className="projects-grid">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="project-card-skeleton" />
-                ))}
+          {/* Two-option segmented switch */}
+          <div className="form-group mode-switch-group">
+            <SegmentedSwitch
+              id="start-mode-switch"
+              options={MODE_OPTIONS}
+              value={mode}
+              onChange={handleModeChange}
+            />
+          </div>
+
+          {/* Mode 1: GITHUB REPO panel */}
+          <div
+            role="tabpanel"
+            id="start-mode-switch-panel-repo"
+            aria-labelledby="start-mode-switch-tab-repo"
+            hidden={mode !== "repo"}
+            className="tabpanel-content"
+          >
+            {mode === "repo" && (
+              <RepoInput
+                value={repoUrl}
+                onChange={setRepoUrl}
+                parsed={repoParsed}
+                onParsedChange={setRepoParsed}
+                onSubmit={handleSubmit}
+                disabled={isSubmitting}
+              />
+            )}
+          </div>
+
+          {/* Mode 2: DEMO PROJECTS panel */}
+          <div
+            role="tabpanel"
+            id="start-mode-switch-panel-demo"
+            aria-labelledby="start-mode-switch-tab-demo"
+            hidden={mode !== "demo"}
+            className="tabpanel-content"
+          >
+            {mode === "demo" && (
+              <div className="demo-projects-wrapper">
+                {/* Loading state */}
+                {projectsLoading && (
+                  <div className="projects-section">
+                    <h2 className="text-heading-lg projects-heading">Projects</h2>
+                    <div className="projects-grid">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="project-card-skeleton" />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Slow backend message */}
+                {slowBackend && projectsLoading && (
+                  <div className="slow-backend-message text-body-sm">
+                    The backend may be waking up. This can take up to a minute.
+                  </div>
+                )}
+
+                {/* Error state */}
+                {projectsError && !projectsLoading && (
+                  <div className="error-section">
+                    <p className="text-body-sm error-message">{projectsError}</p>
+                    <button
+                      type="button"
+                      onClick={fetchProjects}
+                      className="retry-button"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {/* Empty state */}
+                {!projectsLoading && !projectsError && projects.length === 0 && (
+                  <div className="empty-section">
+                    <p className="text-body-lg">No projects available</p>
+                    <p className="text-body-sm">
+                      The backend needs a local or demo repository to scan. Please set up a
+                      project and try again.
+                    </p>
+                  </div>
+                )}
+
+                {/* Success state - projects list */}
+                {!projectsLoading && !projectsError && projects.length > 0 && (
+                  <div className="projects-section">
+                    <h2 className="text-heading-lg projects-heading">Projects</h2>
+                    <div className="projects-grid">
+                      {projects.map((project) => (
+                        <ProjectCard
+                          key={project.id}
+                          project={project}
+                          isSelected={selectedProjectId === project.id}
+                          onSelect={setSelectedProjectId}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Slow backend message */}
-          {slowBackend && loading && (
-            <div className="slow-backend-message text-body-sm">
-              The backend may be waking up. This can take up to a minute.
-            </div>
-          )}
-
-          {/* Error state */}
-          {error && !loading && (
-            <div className="error-section">
-              <p className="text-body-sm error-message">{error}</p>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="retry-button"
-              >
-                Retry
-              </button>
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!loading && !error && projects.length === 0 && (
-            <div className="empty-section">
-              <p className="text-body-lg">No projects available</p>
-              <p className="text-body-sm">
-                The backend needs a local or demo repository to scan. Please set up a
-                project and try again.
-              </p>
-            </div>
-          )}
-
-          {/* Success state - projects list */}
-          {!loading && !error && projects.length > 0 && (
-            <div className="projects-section">
-              <h2 className="text-heading-lg projects-heading">Projects</h2>
-              <div className="projects-grid">
-                {projects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    project={project}
-                    isSelected={selectedProjectId === project.id}
-                    onSelect={setSelectedProjectId}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Controls - target limit */}
+          {/* Shared scan configuration: Target Limit */}
           <div className="form-group">
             <label htmlFor="target-limit" className="text-body-md form-label">
               Target Limit
@@ -284,7 +396,7 @@ export default function StartPage() {
             )}
           </div>
 
-          {/* Controls - repair limit */}
+          {/* Shared scan configuration: Repair Limit */}
           <div className="form-group">
             <label htmlFor="repair-limit" className="text-body-md form-label">
               Repair Limit
@@ -306,7 +418,7 @@ export default function StartPage() {
             )}
           </div>
 
-          {/* Controls - verify mutations toggle */}
+          {/* Shared scan configuration: Verify Mutations toggle */}
           <div className="form-group form-group-toggle">
             <label htmlFor="verify-mutations" className="text-body-md form-label">
               <input
@@ -329,7 +441,7 @@ export default function StartPage() {
               <p className="text-body-sm error-message">{submitError}</p>
               <button
                 type="button"
-                onClick={() => setSubmitError(null)}
+                onClick={handleSubmit}
                 className="try-again-button"
               >
                 Try again
