@@ -197,6 +197,37 @@ export async function getDiff(runId, signal = null) {
 }
 
 /**
+ * GET /api/runs/:run_id/patch
+ * Download patch file as a Blob
+ * @param {string} runId - The run ID
+ * @param {AbortSignal} signal - Optional abort signal
+ * @returns {Promise<Blob>} Patch file blob
+ */
+export async function getPatch(runId, signal = null) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  const response = await fetch(`${baseUrl}/api/runs/${runId}/patch`, {
+    signal,
+    headers: {
+      Accept: "text/x-diff, text/plain, */*",
+    },
+  });
+
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const data = await response.json();
+      detail = data.detail || data.message;
+    } catch {
+      // Not JSON
+    }
+    const msg = detail || response.statusText || `HTTP ${response.status}`;
+    throw new ApiError(response.status, msg);
+  }
+
+  return response.blob();
+}
+
+/**
  * PATCH /api/runs/:run_id
  * Update a run's URL (when code changes)
  * @param {string} runId - The run ID

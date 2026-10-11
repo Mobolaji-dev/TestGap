@@ -18,6 +18,7 @@ export default function Sidebar() {
   const runIdMatch = location.pathname.match(/\/(?:run|results)\/([^/]+)/);
   const currentRunId = runIdMatch ? runIdMatch[1] : null;
   const isRunActive = Boolean(currentRunId && location.pathname === `/run/${currentRunId}`);
+  const isResultsActive = Boolean(currentRunId && location.pathname === `/results/${currentRunId}`);
 
   // Close drawer on item click
   const handleNavClick = (path) => {
@@ -68,14 +69,24 @@ export default function Sidebar() {
                 New scan
               </button>
               {currentRunId && (
-                <button
-                  className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
-                  onClick={() => handleNavClick(`/run/${currentRunId}`)}
-                  aria-current={isRunActive ? "page" : undefined}
-                  title={`Run ${currentRunId}`}
-                >
-                  Current run
-                </button>
+                <>
+                  <button
+                    className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
+                    onClick={() => handleNavClick(`/run/${currentRunId}`)}
+                    aria-current={isRunActive ? "page" : undefined}
+                    title={`Run ${currentRunId}`}
+                  >
+                    Current run
+                  </button>
+                  <button
+                    className={`nav-item ${isResultsActive ? "nav-item-active" : ""}`}
+                    onClick={() => handleNavClick(`/results/${currentRunId}`)}
+                    aria-current={isResultsActive ? "page" : undefined}
+                    title={`Results ${currentRunId}`}
+                  >
+                    Results
+                  </button>
+                </>
               )}
             </nav>
           </div>
@@ -123,14 +134,24 @@ export default function Sidebar() {
                   New scan
                 </button>
                 {currentRunId && (
-                  <button
-                    className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
-                    onClick={() => handleNavClick(`/run/${currentRunId}`)}
-                    aria-current={isRunActive ? "page" : undefined}
-                    title={`Run ${currentRunId}`}
-                  >
-                    Current run
-                  </button>
+                  <>
+                    <button
+                      className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
+                      onClick={() => handleNavClick(`/run/${currentRunId}`)}
+                      aria-current={isRunActive ? "page" : undefined}
+                      title={`Run ${currentRunId}`}
+                    >
+                      Current run
+                    </button>
+                    <button
+                      className={`nav-item ${isResultsActive ? "nav-item-active" : ""}`}
+                      onClick={() => handleNavClick(`/results/${currentRunId}`)}
+                      aria-current={isResultsActive ? "page" : undefined}
+                      title={`Results ${currentRunId}`}
+                    >
+                      Results
+                    </button>
+                  </>
                 )}
               </nav>
             </div>
