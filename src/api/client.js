@@ -50,12 +50,12 @@ export function formatErrorDetail(detail) {
  * @throws {ApiError} On non-2xx status
  */
 async function apiCall(path, options = {}) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
   const url = `${baseUrl}${path}`;
 
   const headers = {
     Accept: "application/json",
-    "Content-Type": "application/json",
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
     ...options.headers,
   };
 
@@ -64,11 +64,16 @@ async function apiCall(path, options = {}) {
     headers,
   });
 
-  const data = await response.json();
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    // Response body is not JSON or is empty
+  }
 
   if (!response.ok) {
     // Extract detail from error response
-    const detail = data.detail || data.message || response.statusText;
+    const detail = data?.detail || data?.message || response.statusText || `HTTP ${response.status}`;
     throw new ApiError(response.status, detail);
   }
 
@@ -151,8 +156,11 @@ export async function getRun(runId, signal = null) {
  * @returns {string} Full EventSource URL
  */
 export function eventsUrl(runId, afterEventId = null) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL;
-  const path = afterEventId ? `/api/runs/${runId}/events?after=${afterEventId}` : `/api/runs/${runId}/events`;
+  const baseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  const path =
+    afterEventId != null && afterEventId !== ""
+      ? `/api/runs/${runId}/events?after=${encodeURIComponent(afterEventId)}`
+      : `/api/runs/${runId}/events`;
   return `${baseUrl}${path}`;
 }
 

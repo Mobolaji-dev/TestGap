@@ -1,28 +1,85 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getRun, cancelRun, eventsUrl, ApiError, formatErrorDetail } from "../api/client";
+import { getRun, eventsUrl, ApiError, formatErrorDetail } from "../api/client";
+
+const TERMINAL_STATUSES = new Set([
+  "completed",
+  "completed_with_warnings",
+  "failed",
+  "cancelled",
+]);
+
+const TERMINAL_EVENT_TYPES = new Set([
+  "run.completed",
+  "run.failed",
+  "run.cancelled",
+]);
+
+const SSE_EVENT_TYPES = [
+  "run.queued",
+  "run.started",
+  "step.started",
+  "step.completed",
+  "step.failed",
+  "warning",
+  "run.completed",
+  "run.failed",
+  "run.cancelled",
+];
+
+export function isTerminalStatus(status) {
+  return TERMINAL_STATUSES.has(status);
+}
+
+export function isTerminalEvent(type) {
+  return TERMINAL_EVENT_TYPES.has(type);
+}
+
+function getEventId(evt) {
+  if (!evt) return null;
+  if (evt.event_id != null) return Number(evt.event_id);
+  if (evt.id != null) return Number(evt.id);
+  return null;
+}
+
+function parseEvent(data) {
+  if (typeof data !== "string") return null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
 
 /**
- * Custom hook for managing a run's real-time event stream
- * Handles hydration, SSE connection, event deduplication, reconnection with backoff,
- * polling fallback, and terminal state detection.
+ * Custom hook for managing a run's real-time event stream.
  *
  * @param {string} runId - The run ID to stream events for
  * @returns {{
  *   run: Object | null,
  *   events: Array,
- *   connection: string,
+ *   connection: "connecting" | "live" | "reconnecting" | "polling" | "closed",
  *   error: string | null,
- *   refresh: Function,
- *   cancel: Function,
- *   isCancelling: boolean
+ *   errorStatus: number | null,
+ *   refresh: () => Promise<Object | null>
  * }}
  */
 export default function useRunStream(runId) {
+  const [prevRunId, setPrevRunId] = useState(runId);
   const [run, setRun] = useState(null);
   const [events, setEvents] = useState([]);
   const [connection, setConnection] = useState("connecting");
   const [error, setError] = useState(null);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [errorStatus, setErrorStatus] = useState(null);
+
+  // If runId changes, reset state during render (standard React pattern)
+  if (prevRunId !== runId) {
+    setPrevRunId(runId);
+    setRun(null);
+    setEvents([]);
+    setConnection("connecting");
+    setError(null);
+    setErrorStatus(null);
+  }
 
   const eventSourceRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -31,138 +88,61 @@ export default function useRunStream(runId) {
   const reconcileIntervalRef = useRef(null);
   const eventIdsRef = useRef(new Set());
   const lastEventIdRef = useRef(null);
-  const abortControllerRef = useRef(new AbortController());
+  const isMountedRef = useRef(true);
+  const runRef = useRef(null);
+  const connectionRef = useRef("connecting");
+  const openStreamRef = useRef(null);
 
-  // Track if run is terminal (based on latest state)
-  const isTerminal = (status) =>
-    status === "completed" ||
-    status === "completed_with_warnings" ||
-    status === "failed" ||
-    status === "cancelled";
+  // Keep connectionRef in sync with state
+  useEffect(() => {
+    connectionRef.current = connection;
+  }, [connection]);
 
-  /**
-   * Parse an SSE event and extract the data
-   */
-  const parseEvent = (eventData) => {
-    try {
-      return JSON.parse(eventData);
-    } catch {
-      return null;
-    }
-  };
+  // Keep runRef in sync with state
+  useEffect(() => {
+    runRef.current = run;
+  }, [run]);
 
   /**
-   * Add or update event in state, keeping sorted by event_id
+   * Merge and deduplicate incoming events by event_id, keeping them sorted.
    */
-  const mergeEvent = (newEvent) => {
-    setEvents((prevEvents) => {
-      // Check if we've already seen this event
-      if (eventIdsRef.current.has(newEvent.id)) {
-        return prevEvents;
-      }
+  const mergeEvents = useCallback((incomingEvents) => {
+    if (!Array.isArray(incomingEvents) || incomingEvents.length === 0) return;
 
-      eventIdsRef.current.add(newEvent.id);
-      lastEventIdRef.current = newEvent.id;
+    setEvents((prev) => {
+      let hasNew = false;
+      const next = [...prev];
 
-      // Add and sort by event_id
-      const updated = [...prevEvents, newEvent];
-      updated.sort((a, b) => {
-        const aId = parseInt(a.id, 10) || 0;
-        const bId = parseInt(b.id, 10) || 0;
-        return aId - bId;
-      });
-
-      return updated;
-    });
-  };
-
-  /**
-   * Hydrate run data and seed events from initial state
-   */
-  const hydrate = useCallback(async () => {
-    try {
-      const data = await getRun(runId, abortControllerRef.current.signal);
-      setRun(data);
-      setError(null);
-
-      // Seed events from the initial run state
-      if (Array.isArray(data.events)) {
-        data.events.forEach((evt) => {
-          if (!eventIdsRef.current.has(evt.id)) {
-            mergeEvent(evt);
+      for (const evt of incomingEvents) {
+        if (!evt) continue;
+        const id = getEventId(evt);
+        if (id != null) {
+          if (!eventIdsRef.current.has(id)) {
+            eventIdsRef.current.add(id);
+            if (lastEventIdRef.current == null || id > lastEventIdRef.current) {
+              lastEventIdRef.current = id;
+            }
+            next.push(evt);
+            hasNew = true;
           }
-        });
-      }
-
-      return data;
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-        setError(msg);
-      }
-      return null;
-    }
-  }, [runId]);
-
-  /**
-   * Open EventSource connection for live events
-   */
-  const openStream = useCallback(() => {
-    if (eventSourceRef.current) {
-      return; // Already open
-    }
-
-    const url = eventsUrl(runId, lastEventIdRef.current);
-    const eventSource = new EventSource(url);
-
-    // List of event types to listen for
-    const eventTypes = [
-      "run.queued",
-      "run.started",
-      "step.started",
-      "step.completed",
-      "step.failed",
-      "warning",
-      "run.completed",
-      "run.failed",
-      "run.cancelled",
-    ];
-
-    // Register listeners for each named event type
-    eventTypes.forEach((eventType) => {
-      eventSource.addEventListener(eventType, (e) => {
-        const evt = parseEvent(e.data);
-        if (evt) {
-          mergeEvent(evt);
-          if (isTerminal(evt.status) || evt.type === "run.completed" || evt.type === "run.failed" || evt.type === "run.cancelled") {
-            closeStream();
-            hydrate(); // Get canonical final state
-          }
+        } else {
+          next.push(evt);
+          hasNew = true;
         }
-      });
-    });
-
-    // Also listen for unnamed events (onmessage)
-    eventSource.onmessage = (e) => {
-      const evt = parseEvent(e.data);
-      if (evt) {
-        mergeEvent(evt);
       }
-    };
 
-    eventSource.onerror = () => {
-      closeStream();
-      handleStreamError();
-    };
+      if (!hasNew) return prev;
 
-    eventSourceRef.current = eventSource;
-    setConnection("live");
-    reconnectAttemptsRef.current = 0;
-  }, [runId, hydrate]);
+      next.sort((a, b) => {
+        const idA = getEventId(a) ?? 0;
+        const idB = getEventId(b) ?? 0;
+        return idA - idB;
+      });
 
-  /**
-   * Close EventSource connection
-   */
+      return next;
+    });
+  }, []);
+
   const closeStream = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -170,65 +150,13 @@ export default function useRunStream(runId) {
     }
   }, []);
 
-  /**
-   * Handle stream error with backoff and fallback to polling
-   */
-  const handleStreamError = useCallback(() => {
-    reconnectAttemptsRef.current += 1;
-
-    if (reconnectAttemptsRef.current <= 3) {
-      // Backoff: 1s, 2s, 4s
-      const backoffMs = Math.pow(2, reconnectAttemptsRef.current - 1) * 1000;
-      setConnection("reconnecting");
-
-      reconnectTimeoutRef.current = setTimeout(() => {
-        openStream();
-      }, backoffMs);
-    } else {
-      // Switch to polling
-      setConnection("polling");
-      startPolling();
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
-  }, [openStream]);
+  }, []);
 
-  /**
-   * Start polling for run updates as fallback
-   */
-  const startPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      return; // Already polling
-    }
-
-    pollingIntervalRef.current = setInterval(async () => {
-      try {
-        const data = await getRun(runId, abortControllerRef.current.signal);
-        setRun(data);
-
-        // Merge any new events
-        if (Array.isArray(data.events)) {
-          data.events.forEach((evt) => {
-            if (!eventIdsRef.current.has(evt.id)) {
-              mergeEvent(evt);
-            }
-          });
-        }
-
-        // If terminal, stop polling
-        if (isTerminal(data.status)) {
-          stopPolling();
-        }
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          // Log but don't crash polling
-          console.error("Polling error:", err);
-        }
-      }
-    }, 3000);
-  }, [runId]);
-
-  /**
-   * Stop polling
-   */
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -236,43 +164,6 @@ export default function useRunStream(runId) {
     }
   }, []);
 
-  /**
-   * Reconcile with server every 5 seconds while active (safety net)
-   */
-  const startReconcile = useCallback(() => {
-    if (reconcileIntervalRef.current) {
-      return;
-    }
-
-    reconcileIntervalRef.current = setInterval(async () => {
-      try {
-        const data = await getRun(runId, abortControllerRef.current.signal);
-
-        // Merge any new events we haven't seen
-        if (Array.isArray(data.events)) {
-          data.events.forEach((evt) => {
-            if (!eventIdsRef.current.has(evt.id)) {
-              mergeEvent(evt);
-            }
-          });
-        }
-
-        // Check if status changed to terminal
-        if (run && !isTerminal(run.status) && isTerminal(data.status)) {
-          closeStream();
-          stopPolling();
-        }
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          console.error("Reconcile error:", err);
-        }
-      }
-    }, 5000);
-  }, [runId, run, closeStream, stopPolling]);
-
-  /**
-   * Stop reconciliation
-   */
   const stopReconcile = useCallback(() => {
     if (reconcileIntervalRef.current) {
       clearInterval(reconcileIntervalRef.current);
@@ -281,73 +172,291 @@ export default function useRunStream(runId) {
   }, []);
 
   /**
-   * Refresh: get fresh run data
+   * Fetch canonical final state from the API when terminal.
    */
-  const refresh = useCallback(async () => {
-    const data = await hydrate();
-    return data;
-  }, [hydrate]);
-
-  /**
-   * Cancel the run
-   */
-  const cancel = useCallback(async () => {
+  const fetchCanonical = useCallback(async () => {
     try {
-      setIsCancelling(true);
-      await cancelRun(runId, abortControllerRef.current.signal);
-      await hydrate();
-    } catch (err) {
-      const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
-      setError(msg);
-    } finally {
-      setIsCancelling(false);
+      const data = await getRun(runId);
+      if (!isMountedRef.current) return;
+      setRun(data);
+      runRef.current = data;
+      if (Array.isArray(data.events)) {
+        mergeEvents(data.events);
+      }
+      if (isTerminalStatus(data.status)) {
+        closeStream();
+        stopPolling();
+        stopReconcile();
+        setConnection("closed");
+      }
+    } catch {
+      // Keep existing data on screen
     }
-  }, [runId, hydrate]);
+  }, [runId, closeStream, stopPolling, stopReconcile, mergeEvents]);
 
   /**
-   * Main effect: hydrate and open stream/polling based on status
+   * Start polling every 3 seconds after 3 failed SSE attempts.
    */
-  useEffect(() => {
-    const init = async () => {
-      const data = await hydrate();
+  const startPolling = useCallback(() => {
+    if (pollingIntervalRef.current) return;
 
-      if (!data) {
-        // Error already set by hydrate
-        return;
+    const poll = async () => {
+      if (!isMountedRef.current) return;
+      try {
+        const data = await getRun(runId);
+        if (!isMountedRef.current) return;
+        setRun(data);
+        runRef.current = data;
+        if (Array.isArray(data.events)) {
+          mergeEvents(data.events);
+        }
+
+        if (isTerminalStatus(data.status)) {
+          stopPolling();
+          closeStream();
+          stopReconcile();
+          setConnection("closed");
+        } else {
+          // If network returned and polling succeeded while run is still active,
+          // recover back to the live stream
+          reconnectAttemptsRef.current = 0;
+          stopPolling();
+          openStreamRef.current?.();
+        }
+      } catch {
+        // Network still down; stay in polling mode and keep run data on screen
       }
-
-      // If already terminal, don't open stream
-      if (isTerminal(data.status)) {
-        setConnection("closed");
-        return;
-      }
-
-      // Otherwise, open stream and start reconculation
-      openStream();
-      startReconcile();
     };
 
-    init();
+    pollingIntervalRef.current = setInterval(poll, 3000);
+  }, [runId, mergeEvents, stopPolling, closeStream, stopReconcile]);
 
-    // Cleanup on unmount or runId change
-    return () => {
+  /**
+   * Open the EventSource connection and wire all event handlers.
+   */
+  const openStream = useCallback(() => {
+    if (!isMountedRef.current) return;
+
+    // Terminal check
+    if (runRef.current && isTerminalStatus(runRef.current.status)) {
       closeStream();
       stopPolling();
       stopReconcile();
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      // Don't abort here; let the component decide
+      setConnection("closed");
+      return;
+    }
+
+    closeStream();
+    clearReconnectTimer();
+    stopPolling();
+
+    const nextConn = reconnectAttemptsRef.current > 0 ? "reconnecting" : "connecting";
+    setConnection(nextConn);
+
+    const url = eventsUrl(runId, lastEventIdRef.current);
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    es.onopen = () => {
+      if (!isMountedRef.current || eventSourceRef.current !== es) return;
+      setConnection("live");
+      reconnectAttemptsRef.current = 0;
     };
-  }, [runId, hydrate, openStream, startReconcile, closeStream, stopPolling, stopReconcile]);
+
+    const handleEventMessage = (e) => {
+      if (!isMountedRef.current || eventSourceRef.current !== es) return;
+      const evt = parseEvent(e.data);
+      if (!evt) return;
+
+      mergeEvents([evt]);
+
+      if (isTerminalEvent(evt.type) || isTerminalStatus(evt.status)) {
+        closeStream();
+        stopPolling();
+        stopReconcile();
+        setConnection("closed");
+        fetchCanonical();
+      }
+    };
+
+    // Backend emits named SSE events: register addEventListener for each known type
+    SSE_EVENT_TYPES.forEach((type) => {
+      es.addEventListener(type, handleEventMessage);
+    });
+
+    // Also handle unnamed events
+    es.onmessage = handleEventMessage;
+
+    es.onerror = () => {
+      if (!isMountedRef.current || eventSourceRef.current !== es) return;
+      closeStream();
+
+      reconnectAttemptsRef.current += 1;
+      if (reconnectAttemptsRef.current <= 3) {
+        // Backoff: 1s, 2s, 4s
+        const backoffMs = Math.pow(2, reconnectAttemptsRef.current - 1) * 1000;
+        setConnection("reconnecting");
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (!isMountedRef.current) return;
+          openStreamRef.current?.();
+        }, backoffMs);
+      } else {
+        // Fall back to polling every 3 seconds
+        setConnection("polling");
+        startPolling();
+      }
+    };
+  }, [
+    runId,
+    closeStream,
+    clearReconnectTimer,
+    stopPolling,
+    stopReconcile,
+    mergeEvents,
+    fetchCanonical,
+    startPolling,
+  ]);
+
+  useEffect(() => {
+    openStreamRef.current = openStream;
+  }, [openStream]);
+
+  /**
+   * Reconcile safety net: fetch getRun every 5s while active to catch any events.
+   */
+  const startReconcile = useCallback(() => {
+    if (reconcileIntervalRef.current) return;
+
+    reconcileIntervalRef.current = setInterval(async () => {
+      if (!isMountedRef.current) return;
+      if (connectionRef.current === "polling" || connectionRef.current === "closed") {
+        return;
+      }
+      try {
+        const data = await getRun(runId);
+        if (!isMountedRef.current) return;
+        setRun(data);
+        runRef.current = data;
+        if (Array.isArray(data.events)) {
+          mergeEvents(data.events);
+        }
+        if (isTerminalStatus(data.status)) {
+          closeStream();
+          stopPolling();
+          stopReconcile();
+          setConnection("closed");
+        }
+      } catch {
+        // Reconcile is non-blocking safety net
+      }
+    }, 5000);
+  }, [runId, mergeEvents, closeStream, stopPolling, stopReconcile]);
+
+  /**
+   * Manual refresh function.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const data = await getRun(runId);
+      if (!isMountedRef.current) return data;
+      setRun(data);
+      runRef.current = data;
+      setError(null);
+      setErrorStatus(null);
+      if (Array.isArray(data.events)) {
+        mergeEvents(data.events);
+      }
+      if (isTerminalStatus(data.status)) {
+        closeStream();
+        stopPolling();
+        stopReconcile();
+        setConnection("closed");
+      }
+      return data;
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
+        setError(msg);
+        setErrorStatus(err.status ?? null);
+      }
+      return null;
+    }
+  }, [runId, mergeEvents, closeStream, stopPolling, stopReconcile]);
+
+  /**
+   * Main lifecycle effect on mount or runId change.
+   */
+  useEffect(() => {
+    isMountedRef.current = true;
+    const abortController = new AbortController();
+
+    eventIdsRef.current = new Set();
+    lastEventIdRef.current = null;
+    reconnectAttemptsRef.current = 0;
+
+    const hydrate = async () => {
+      try {
+        const data = await getRun(runId, abortController.signal);
+        if (!isMountedRef.current) return;
+        setRun(data);
+        runRef.current = data;
+        setError(null);
+        setErrorStatus(null);
+
+        // Seed events from the initial run state
+        if (Array.isArray(data.events)) {
+          mergeEvents(data.events);
+        }
+
+        // If hydrated status is already terminal, do NOT open a stream.
+        // Show the stored events and outcome only.
+        if (isTerminalStatus(data.status)) {
+          setConnection("closed");
+          return;
+        }
+
+        // If queued or running, open stream and start 5s safety net reconciliation
+        openStreamRef.current?.();
+        startReconcile();
+      } catch (err) {
+        if (!isMountedRef.current || err.name === "AbortError") return;
+        const msg = err instanceof ApiError ? formatErrorDetail(err.detail) : err.message;
+        setError(msg);
+        setErrorStatus(err.status ?? (msg.toLowerCase().includes("not found") ? 404 : null));
+        setConnection("closed");
+      }
+    };
+
+    hydrate();
+
+    // Online event listener to recover when network is restored
+    const handleOnline = () => {
+      if (!isMountedRef.current) return;
+      if (runRef.current && !isTerminalStatus(runRef.current.status)) {
+        reconnectAttemptsRef.current = 0;
+        openStreamRef.current?.();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      isMountedRef.current = false;
+      abortController.abort();
+      window.removeEventListener("online", handleOnline);
+      closeStream();
+      clearReconnectTimer();
+      stopPolling();
+      stopReconcile();
+    };
+  }, [runId, mergeEvents, startReconcile, closeStream, clearReconnectTimer, stopPolling, stopReconcile]);
 
   return {
     run,
     events,
     connection,
     error,
+    errorStatus,
     refresh,
-    cancel,
-    isCancelling,
   };
 }

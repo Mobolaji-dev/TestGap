@@ -14,6 +14,11 @@ export default function Sidebar() {
 
   const isActive = location.pathname === "/";
 
+  // Extract runId from URL (e.g., /run/:runId or /results/:runId)
+  const runIdMatch = location.pathname.match(/\/(?:run|results)\/([^/]+)/);
+  const currentRunId = runIdMatch ? runIdMatch[1] : null;
+  const isRunActive = Boolean(currentRunId && location.pathname === `/run/${currentRunId}`);
+
   // Close drawer on item click
   const handleNavClick = (path) => {
     navigate(path);
@@ -62,6 +67,16 @@ export default function Sidebar() {
               >
                 New scan
               </button>
+              {currentRunId && (
+                <button
+                  className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
+                  onClick={() => handleNavClick(`/run/${currentRunId}`)}
+                  aria-current={isRunActive ? "page" : undefined}
+                  title={`Run ${currentRunId}`}
+                >
+                  Current run
+                </button>
+              )}
             </nav>
           </div>
         </div>
@@ -98,9 +113,7 @@ export default function Sidebar() {
 
             {/* Navigation section */}
             <div className="sidebar-nav">
-              <span className="text-caption-lg sidebar-nav-label">
-                Navigation
-              </span>
+              <span className="text-caption-lg sidebar-nav-label">Navigation</span>
               <nav>
                 <button
                   className={`nav-item ${isActive ? "nav-item-active" : ""}`}
@@ -109,6 +122,16 @@ export default function Sidebar() {
                 >
                   New scan
                 </button>
+                {currentRunId && (
+                  <button
+                    className={`nav-item ${isRunActive ? "nav-item-active" : ""}`}
+                    onClick={() => handleNavClick(`/run/${currentRunId}`)}
+                    aria-current={isRunActive ? "page" : undefined}
+                    title={`Run ${currentRunId}`}
+                  >
+                    Current run
+                  </button>
+                )}
               </nav>
             </div>
           </div>
